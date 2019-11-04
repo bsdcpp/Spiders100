@@ -6,7 +6,7 @@
 新浪微盘资源下载，不需要模拟浏览器，完全使用接口调用
 '''
 
-import os
+import os, sys
 import re
 import time
 import json
@@ -20,25 +20,36 @@ class Weipan(object):
         self.baseurl = url
         self.items = []
         self.output = output
+        self.sub_baseurl = ''
 
-    def get_item_list(self, url):
+    def get_item_list(self, url, ctype):
         res = requests.get(url).text
         tree = etree.HTML(res)
 
         # 提取当前页所有资源，存入列表
         item_selectors = tree.xpath('//div[@class="sort_name_intro"]/div/a')
-        for item_selector in item_selectors:
+        ftype = tree.xpath('//div[@class="sort_name_pic"]/a/@class')
+        for item_selector, ft in zip(item_selectors, ftype):
             link = item_selector.get('href')
             title = item_selector.get('title')
-            self.items.append((link, title))
+            if ft == 'vd_icon32_v2 vd_folder':
+                self.sub_baseurl = link
+                self.get_item_list(link, 'folder')
+            else:
+                self.items.append((link, title))
+
 
         # 提取下一页链接，进行递归爬取
         next_page_selectors = tree.xpath('//div[@class="vd_page"]/a[@class="vd_bt_v2 vd_page_btn"]')
         for next_page_selector in next_page_selectors:
             next_text = next_page_selector.xpath('./span')[0].text.strip()
             if next_text == "下一页":
-                next_url = self.baseurl + next_page_selector.get('href')
-                self.get_item_list(next_url)
+                if ctype == 'folder':
+                    next_url = self.sub_baseurl + next_page_selector.get('href')
+                    self.get_item_list(next_url, 'folder')
+                else:
+                    next_url = self.baseurl + next_page_selector.get('href')
+                    self.get_item_list(next_url, 'link')
 
     def get_callback_info_by_item(self, item):
         '''
@@ -65,16 +76,19 @@ class Weipan(object):
         res = requests.get(callback, headers=headers).text
         data = json.loads(res)
         name = data.get('name')
+        path = data.get('path')
         load_url = data.get('url')
-        return name, load_url
+        print(url, callback, path, load_url)
+        return path, load_url
 
     def load(self, load_info):
-        name, load_url = load_info
+        path, load_url = load_info
         content = requests.get(load_url).content
-        savename = os.path.join(self.output, name)
+        savename = os.path.join(self.output, path)
+        os.makedirs(os.path.dirname(savename), 0o755, True)
         with open(savename, 'wb+') as f:
             f.write(content)
-        print('{} load done'.format(name))
+        print('{} load done'.format(path))
 
     def load_by_item(self, item):
         '''
@@ -86,14 +100,15 @@ class Weipan(object):
 
     def main(self):
         # 收集资源下载信息
-        self.get_item_list(self.baseurl)
+        self.get_item_list(self.baseurl, 'link')
         # 多线程下载资源
         with ThreadPoolExecutor(max_workers=8) as pool:
             pool.map(self.load_by_item, self.items)
 
 
 if __name__ == '__main__':
-    URL = 'https://vdisk.weibo.com/s/tg6IJ27yogat5'
-    OUTPUT = r'C:\Users\HP\Downloads\load'
+    URL = 'http://vdisk.weibo.com/s/uGmF42vqqKUnm'
+    URL = sys.argv[1]
+    OUTPUT = r'liang2'
     wp = Weipan(URL, OUTPUT)
     wp.main()
